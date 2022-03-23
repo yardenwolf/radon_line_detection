@@ -1,3 +1,6 @@
 scikit-image
 opencv-python
 numpy
+torch
+torchvision
+torchaudio
