@@ -4,3 +4,4 @@ numpy
 torch
 torchvision
 torchaudio
+nd2reader
