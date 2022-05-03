@@ -18,34 +18,53 @@ from skimage.transform import radon, rescale
 def radon_exmaple():
     # image = load_image("C:/Users/yarde/Documents/sample-data/2022-02-10/1824.nd2", process_or_percentile)
     image = np.zeros((512, 512))
-    diagonal = [i for i in range(0, 512)]
-    image[diagonal, diagonal] = 256
+    # diagonal = [i for i in range(0, 512)]
+    # image[diagonal, diagonal] = 256
     # blured_image = cv2.medianBlur(image, 5)
+    # cv2.line(image, (0,216), (512,512), color=(255,0,0))
+    cv2.line(image, (0,0), (512,512), color=(255,0,0))
+    #cv2.line(image, (0, 0), (296, 512), color=(255, 0, 0))
     blured_image = image
     theta = np.linspace(0., 180., max(image.shape), endpoint=False)
     res = transform.radon(image=blured_image, theta=theta)
     kernel = np.ones((3, 7), np.uint8)
-    peaks = peak_local_max(res, min_distance=5, num_peaks=30, footprint=kernel)
+    peaks = peak_local_max(res, min_distance=2, num_peaks=5, footprint=kernel)
     peaks = filter_peaks(peaks)
+    peak = np.unravel_index(np.argmax(res, axis=None), res.shape)
+    m, n = get_m_n_line(r_cent=peak[0], theta=(peak[1] / 512) * 180, image_size=res.shape)
+    p_1 = (0,int(512-n))
+    p_2 = (int(-n//m), 512)
+    new_image = np.zeros(image.shape)
+    cv2.line(new_image, p_1, p_2, color=(255, 0, 0))
     zero_image = np.zeros(res.shape)
-    # for i, j in peaks:
-    #    zero_image[i, j] = res[i, j]
-    i, j = peaks[0]
-    zero_image[i, j] = res[i, j]
+    for i, j in peaks:
+        zero_image[i, j] = res[i, j]
+    # i, j = peaks[0]
+    # zero_image[i, j] = res[i, j]
     reconstruction = transform.iradon(zero_image, theta=theta)
     reconstruction = normalize_matrix(reconstruction)
     image = add_contrast(image)  # just for displaying the dots better
     image[reconstruction > 0.4] = 20000
-    # f, axarr = plt.subplots(1, 2, constrained_layout=True)
-    # axarr[0].imshow(reconstruction, cmap=plt.get_cmap('gray'))
+    f, axarr = plt.subplots(1, 2, constrained_layout=True)
+    axarr[0].imshow(blured_image, cmap=plt.get_cmap('gray'))
     # axarr[0].set_title("lines")
-    # axarr[1].imshow(image, cmap=plt.get_cmap('gray'))
+    axarr[1].imshow(image, cmap=plt.get_cmap('gray'))
     # axarr[1].set_title("lines on dots")
-    # plt.show()
+    plt.show()
     # plt.savefig('example.pdf', dpi=1200)
     # plt.savefig('./pictures/after_peak_filter.png', dpi=1200)
     # print("123")
     return peaks
+
+
+def get_m_n_line(r_cent, theta, image_size):
+    dist = r_cent - image_size[0] // 2
+    theta_rad = np.deg2rad(theta)
+    intersec_y = image_size[1] // 2 + np.sin(theta_rad) * dist
+    intersect_x = image_size[0] // 2 + np.cos(theta_rad) * dist
+    m = -np.tan(np.pi/2 - theta_rad)
+    n = intersec_y - m * intersect_x
+    return m, n
 
 
 def filter_peaks(peaks: np.ndarray):

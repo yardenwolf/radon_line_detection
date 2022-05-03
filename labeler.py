@@ -33,17 +33,19 @@ def extract_angles_from_lables(lable_path: str) -> List[Line]:
     for line_number, line_df in lines_data:
         base_index = line_number * 2
         x_0 = line_df["axis-2"][base_index]
-        y_0 = 512-line_df["axis-1"][base_index]
+        y_0 = 512 - line_df["axis-1"][base_index]
         x_1 = line_df["axis-2"][base_index + 1]
-        y_1 = 512-line_df["axis-1"][base_index + 1]
+        y_1 = 512 - line_df["axis-1"][base_index + 1]
         dy = y_1 - y_0
         dx = x_1 - x_0
         m = dy / dx
         # theta is the angle between the origin and closest point from the origin to the line
         theta_radians = np.pi / 2 - np.arctan(np.abs(m))
         cos_theta = np.cos(theta_radians)
-        y_star = y_0 - m * x_0
-        r = cos_theta * y_star
+        # y_star = y_0 - m * x_0
+        # r = cos_theta * y_star
+        x_star = x_0 - y_0 / m
+        r = ((cos_theta) ** 2) * x_star
         # calculating the intersection between the line and x axis
         # r = x_1 * np.cos(theta_radians) + y_1 * np.sin(theta_radians)
         lines.append(Line(theta=np.rad2deg(theta_radians), r=r))

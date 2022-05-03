@@ -7,3 +7,4 @@ torchaudio
 nd2reader
 napari[all]
 pandas
+pylops
