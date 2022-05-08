@@ -7,10 +7,9 @@ from image_loader import load_image, process_or_percentile, load_image_for_label
 import numpy as np
 import pandas as pd
 
-from radon import normalize_matrix
 from utils import add_contrast
 
-Line = namedtuple('Line', 'theta r')
+Line = namedtuple('Line', ['m','n'])
 
 
 def view_dataset_in_napari(data_path: str):

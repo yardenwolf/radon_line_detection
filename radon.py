@@ -1,5 +1,6 @@
 from typing import List, Tuple
 
+from collections import namedtuple
 from skimage import transform
 import cv2
 import numpy as np
@@ -8,21 +9,24 @@ from skimage.feature.peak import peak_local_max
 from nd2reader import ND2Reader
 import matplotlib.pyplot as plt
 
+from labeler import Line
 from utils import add_contrast
 from image_loader import load_image, process_or_percentile, process_func
 
 from skimage.data import shepp_logan_phantom
 from skimage.transform import radon, rescale
 
+Line = namedtuple('Line', ['m', 'n'])
+
 
 def radon_exmaple():
-    # image = load_image("C:/Users/yarde/Documents/sample-data/2022-02-10/1824.nd2", process_or_percentile)
-    image = np.zeros((512, 512))
+    image = load_image("C:/Users/yarde/Documents/sample-data/2022-02-10/1824.nd2", process_or_percentile)
+    #image = np.zeros((512, 512))
     # diagonal = [i for i in range(0, 512)]
     # image[diagonal, diagonal] = 256
     # blured_image = cv2.medianBlur(image, 5)
-    # cv2.line(image, (0,216), (512,512), color=(255,0,0))
-    cv2.line(image, (0,0), (512,512), color=(255,0,0))
+    #cv2.line(image, (0,216), (512,512), color=(255,0,0))
+    #cv2.line(image, (0,0), (512,512), color=(255,0,0))
     #cv2.line(image, (0, 0), (296, 512), color=(255, 0, 0))
     blured_image = image
     theta = np.linspace(0., 180., max(image.shape), endpoint=False)
@@ -30,12 +34,12 @@ def radon_exmaple():
     kernel = np.ones((3, 7), np.uint8)
     peaks = peak_local_max(res, min_distance=2, num_peaks=5, footprint=kernel)
     peaks = filter_peaks(peaks)
-    peak = np.unravel_index(np.argmax(res, axis=None), res.shape)
-    m, n = get_m_n_line(r_cent=peak[0], theta=(peak[1] / 512) * 180, image_size=res.shape)
-    p_1 = (0,int(512-n))
-    p_2 = (int(-n//m), 512)
+    # peak = np.unravel_index(np.argmax(res, axis=None), res.shape)
+    # m, n = get_m_n_line(r_cent=peak[0], theta=(peak[1] / 512) * 180, image_size=res.shape)
+    # p_1 = (0,int(512-n))
+    # p_2 = (int(-n//m), 512)
     new_image = np.zeros(image.shape)
-    cv2.line(new_image, p_1, p_2, color=(255, 0, 0))
+    res = find_lines(peaks=peaks, image_shape=blured_image.shape, image=new_image)
     zero_image = np.zeros(res.shape)
     for i, j in peaks:
         zero_image[i, j] = res[i, j]
@@ -57,14 +61,33 @@ def radon_exmaple():
     return peaks
 
 
+def find_lines(peaks: List, image_shape: List, image=None) -> List[Line]:
+    lines: List[Line] = []
+    for peak in peaks:
+        m, n = get_m_n_line(r_cent=peak[0], theta=(peak[1] / image_shape[1]) * 180, image_size=image_shape)
+        lines.append(Line(m=m, n=n))
+        if image is not None:
+            draw_line_by_equation(m=m, n=n, image=image, color=255)
+    return lines
+
+
 def get_m_n_line(r_cent, theta, image_size):
     dist = r_cent - image_size[0] // 2
     theta_rad = np.deg2rad(theta)
     intersec_y = image_size[1] // 2 + np.sin(theta_rad) * dist
     intersect_x = image_size[0] // 2 + np.cos(theta_rad) * dist
-    m = -np.tan(np.pi/2 - theta_rad)
+    m = -np.tan(np.pi / 2 - theta_rad)
     n = intersec_y - m * intersect_x
     return m, n
+
+
+def draw_line_by_equation(m: float, n: float, image, color):
+    y = lambda x: m * x + n
+    image_height = image.shape[0]
+    for j in range(image.shape[1]):
+        i = int(image_height - y(j))
+        if i >= 0 and i < image_height:
+            image[i, j] = color
 
 
 def filter_peaks(peaks: np.ndarray):
