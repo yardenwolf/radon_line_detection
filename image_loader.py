@@ -30,6 +30,11 @@ def process_or_percentile(images):
     or_agg = cv2.bitwise_or
     return process_func(images, percentile_thresh_func, or_agg)
 
+def process_or_mean(images):
+    mean_thresh_func = np.mean
+    or_agg = cv2.bitwise_or
+    return process_func(images, mean_thresh_func, or_agg)
+
 
 def load_image_for_labeling(dir: str, processing_func: Callable = None):
     all_images = []
