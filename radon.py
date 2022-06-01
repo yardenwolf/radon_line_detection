@@ -1,6 +1,15 @@
+import copy
 from typing import List, Tuple
-
 from collections import namedtuple
+import pickle
+
+import numpy
+
+from utils import add_contrast
+from labeler import Line
+from image_loader import load_image, process_or_mean
+from om_data.exported import ImageMetadataExported, ImageSegmentExported, SegmentedImageExported
+
 from skimage import transform
 import cv2
 import numpy as np
@@ -8,44 +17,54 @@ import torch
 from skimage.feature.peak import peak_local_max
 from nd2reader import ND2Reader
 import matplotlib.pyplot as plt
-
-from labeler import Line
-from utils import add_contrast
-from image_loader import load_image, process_or_percentile, process_func, process_or_mean
-
-from skimage.transform import radon, rescale
+import math
+import imageio
+from skimage import io as sk_io
+from skimage.transform import warp_coords
+from itertools import product
+from uuid import uuid4
 
 
 def radon_exmaple():
-    # image = load_image("C:/Users/yarde/Documents/sample-data/2022-02-10/1824.nd2", process_or_mean)
-    image = np.zeros((512, 512))
+    image, orig_images = load_image("C:/Users/yarde/Documents/sample-data/2022-04-26/1001.nd2", process_or_mean)
+    # image = np.zeros((512, 512))
     # blured_image = cv2.medianBlur(image, 5)
     # cv2.line(image, (0,216), (512,512), color=(255,0,0))
-    #cv2.line(image, (0, 0), (512, 512), color=(255, 0, 0))
-    cv2.line(image, (0, 0), (296, 512), color=(255, 0, 0))
+    # cv2.line(image, (0, 0), (512, 512), color=(255, 0, 0))
+    # cv2.line(image, (0, 0), (296, 512), color=(255, 0, 0))
     blured_image = image
     theta = np.linspace(0., 180., max(image.shape), endpoint=False)
     res = transform.radon(image=blured_image, theta=theta)
     kernel = np.ones((3, 7), np.uint8)
-    #peaks = peak_local_max(res, min_distance=2, num_peaks=20, footprint=kernel)
-    #peaks = filter_peaks(peaks)
-    peak = np.unravel_index(np.argmax(res, axis=None), res.shape)
-    peaks = [peak]
-    #unfiltered_new_image = np.zeros(image.shape)
-    #filtered_new_image = np.zeros(image.shape)
-    #image_3 = cv2.cvtColor(normalize_matrix(blured_image), cv2.COLOR_GRAY2RGB)
-    lines = find_lines(peaks=peaks, image_shape=blured_image.shape, image=blured_image)
-    for line in lines:
-        prof = get_line_profile(m=line.m, n=line.n, pixel_dist=5, image=blured_image)
-        print("12345")
-    #f, axarr = plt.subplots(2, 2, constrained_layout=True)
-    #axarr[0, 0].imshow(blured_image, cmap=plt.get_cmap('gray'))
-    #axarr[0, 0].set_title("processed original")
-    #axarr[1, 0].imshow(unfiltered_new_image, cmap=plt.get_cmap('gray'))
-    #axarr[1, 0].set_title("unfiltered")
-    #axarr[1, 1].imshow(filtered_new_image, cmap=plt.get_cmap('gray'))
-    #axarr[1, 1].set_title("filtered")
-    #plt.savefig('pictures/noise_reduction_demo.png', dpi=1200)
+    peaks = peak_local_max(res, min_distance=2, num_peaks=20, footprint=kernel)
+    peaks = filter_peaks(peaks, q=0.01)
+    # peak = np.unravel_index(np.argmax(res, axis=None), res.shape)
+    # peaks = [peak]
+    lines = find_lines(peaks=peaks, image_shape=blured_image.shape)
+    first_image = normalize_matrix(copy.deepcopy(orig_images[0]))
+    segments = []
+    for index, line in enumerate(lines):
+        # r, theta = get_r_theta_by_m_n(line.m, line.n, image_size=image.shape)
+        # prof, line_image, curve_indices = get_line_profile(m=line.m, n=line.n, pixel_dist=10, image=blured_image)
+        prof, line_image, image_segment = get_line_profile_new(m=line.m, n=line.n, pixel_dist=10, image=blured_image,
+                                                               image_sequence=orig_images)
+        segments.append(image_segment)
+        get_ij_line_by_equation(line.m, line.n, first_image, color=255)
+        imageio.imwrite(f"./extracted/{index}_profile.png", prof)
+        imageio.imwrite(f"./extracted/{index}_origianl.jpeg", line_image)
+    output = np.concatenate([np.expand_dims(first_image, axis=0), orig_images], axis=0)
+    sk_io.imsave('./extracted/output.tiff', output, photometric='minisblack')
+    exported_segments = SegmentedImageExported(None, segments)
+    with open("example.pickle", "wb") as f:
+        pickle.dump(exported_segments, f)
+    # f, axarr = plt.subplots(2, 2, constrained_layout=True)
+    # axarr[0, 0].imshow(blured_image, cmap=plt.get_cmap('gray'))
+    # axarr[0, 0].set_title("processed original")
+    # axarr[1, 0].imshow(unfiltered_new_image, cmap=plt.get_cmap('gray'))
+    # axarr[1, 0].set_title("unfiltered")
+    # axarr[1, 1].imshow(filtered_new_image, cmap=plt.get_cmap('gray'))
+    # axarr[1, 1].set_title("filtered")
+    # plt.savefig('pictures/noise_reduction_demo.png', dpi=1200)
 
 
 def find_lines(peaks: List, image_shape: List, image=None) -> List[Line]:
@@ -68,81 +87,127 @@ def get_m_n_line(r_cent, theta, image_size):
     return m, n
 
 
+def get_line_profile_new(m: float, n: float, pixel_dist: int, image, image_sequence):
+    """
+    returns image with line on it and the straightened profile
+    :param m:
+    :param n:
+    :param pixel_dist:
+    :param image:
+    :param index:
+    :return:
+    """
+    new_image = copy.deepcopy(normalize_matrix(image))
+    curve_indices = get_ij_line_by_equation(m, n, new_image, color=255)
+    pt_0, pt_1 = get_points_on_line_by_equation(m, n, image)
+    line_length = int(math.dist(pt_0, pt_1))
+    first_0, last_0 = get_points_on_line_by_equation(m, n + pixel_dist, image)
+    first_1, last_1 = get_points_on_line_by_equation(m, n - pixel_dist, image)
+    pts1 = np.float32([first_0,
+                       last_0,
+                       first_1])
+    pts2 = np.float32([[0, line_length - 1],
+                       [0, 0],
+                       [pixel_dist - 1, line_length - 1]])
+    M = cv2.getAffineTransform(pts1, pts2)
+    iM = cv2.invertAffineTransform(M=M)
+    profile_list = []
+    for frame in range(0, image_sequence.shape[0]):
+        profile_list.append(cv2.warpAffine(image_sequence[frame], M, (pixel_dist, line_length)))
+    profile_sequence = np.stack(profile_list)
+    # ImageSegmentExported('1234', profile_sequence, [], np.array(curve_indices))
+    dst = cv2.warpAffine(image, M, (pixel_dist, line_length))
+    inverse_func = get_inverse_affine(iM)
+    coorods_map = warp_coords(inverse_func, dst.shape, np.int)
+    image_segment = ImageSegmentExported(int(uuid4()), profile_image_seq=profile_sequence, profile_coords_map=coorods_map,
+                         profile_curve_coords=np.stack(curve_indices))
+    return normalize_matrix(dst), new_image, image_segment
+
+
+def get_inverse_affine(iM):
+    def apply(xy):
+        ones = np.ones((xy.shape[0], 1))
+        return np.matmul(np.append(xy, ones, axis=1), np.transpose(iM))
+
+    return apply
+
+
 def get_line_profile(m: float, n: float, pixel_dist: int, image):
-    (_, _), line_pixel_size = get_points_on_line_by_equation(m, n, image)
-    (first_0, last_0),_ = get_points_on_line_by_equation(m, n + pixel_dist, image)
-    (first_1, last_1),_ = get_points_on_line_by_equation(m, n - pixel_dist, image)
+    """
+    returns image with line on it and the straightened profile
+    :param m:
+    :param n:
+    :param pixel_dist:
+    :param image:
+    :param index:
+    :return:
+    """
+    new_image = copy.deepcopy(normalize_matrix(image))
+    curve_indices = get_ij_line_by_equation(m, n, new_image, color=255)
+    pt_0, pt_1 = get_points_on_line_by_equation(m, n, image)
+    line_length = int(math.dist(pt_0, pt_1))
+    first_0, last_0 = get_points_on_line_by_equation(m, n + pixel_dist, image)
+    first_1, last_1 = get_points_on_line_by_equation(m, n - pixel_dist, image)
     pts1 = np.float32([first_0,
                        last_0,
                        first_1])
-    pts2 = np.float32([[0, line_pixel_size - 1],
+    pts2 = np.float32([[0, line_length - 1],
                        [0, 0],
-                       [pixel_dist - 1, line_pixel_size - 1]])
+                       [pixel_dist - 1, line_length - 1]])
     M = cv2.getAffineTransform(pts1, pts2)
-    dst = cv2.warpAffine(image, M, (pixel_dist, line_pixel_size))
-    return dst
-
-
-def draw_example():
-    image = np.zeros((512, 512))
-    for n in range(-50, -29):
-        get_ij_line_by_equation(2, n, image)
-    image_border = np.zeros((512, 512))
-    # for n in [-60,-20]:
-    #    get_ij_line_by_equation(2, n, image_border)
-    (first_0, last_0), _ = get_points_on_line_by_equation(2, -30, image)
-    (first_1, last_1), _ = get_points_on_line_by_equation(2, -50, image)
-    pts1 = np.float32([first_0,
-                       last_0,
-                       first_1])
-
-    pts2 = np.float32([[0, 511],
-                       [0, 0],
-                       [19, 511]])
-    # image_border = np.zeros((512, 40))
-    M = cv2.getAffineTransform(pts1, pts2)
-    rows, cols = image.shape
-    dst = cv2.warpAffine(image, M, (20, 512))
-    # rot_mat = cv2.getRotationMatrix2D([(first_0[0]-first_1[0])/2, (first_0[1]-first_1[1])/2], angle = 30,scale=1)
-    # warp_rotate_dst = cv2.warpAffine(image, rot_mat, )
-    print("1234")
-    # pts_1 = [np.where()]
-    # pts_2 = []
+    dst = cv2.warpAffine(image, M, (pixel_dist, line_length))
+    return normalize_matrix(dst), new_image, curve_indices
 
 
 def get_points_on_line_by_equation(m: float, n: float, image, color=255):
+    """
+    returns it in (x,y) format
+    :param m:
+    :param n:
+    :param image:
+    :param color:
+    :return:
+    """
     y = lambda x: m * x + n
     index_list = []
-    pixel_line_size = 0
     image_height = image.shape[0]
     for j in range(image.shape[1]):
         i = int(image_height - y(j))
         if i >= 0 and i < image_height:
             index_list.append([j, i])
-            pixel_line_size += 1
-    return [index_list[0], index_list[-1]], pixel_line_size
+    return [index_list[0], index_list[-1]]
 
 
-def get_ij_line_by_equation(m: float, n: float, image, color=255):
+def get_ij_line_by_equation(m: float, n: float, image, color=None):
+    """
+    calculates the indices of the line in the image. if color is specified it
+    colors in the line according to those indices.
+    :param m:
+    :param n:
+    :param image:
+    :param color:
+    :return:
+    """
     y = lambda x: m * x + n
     index_list = []
     image_height = image.shape[0]
     for j in range(image.shape[1]):
         i = int(image_height - y(j))
         if i >= 0 and i < image_height:
+            index_list.append([j, i])
             image[i, j] = color
     return index_list
 
 
-def filter_peaks(peaks: np.ndarray):
+def filter_peaks(peaks: np.ndarray, q: float = 0.05):
     """
-    filtering peaks based on interval around the median of theta from the radon results
+    filtering peaks based on interval around the median of theta from the radon results.
     :param peaks:
+    :param q: qunatile distance from median from both sides (negative and positive).
     :return:
     """
     thetas = peaks[0:, 1]
     median = np.median(thetas)
-    q = 0.1  # quantile distance from median
     a = median * q
     elements = np.logical_and((median - a) < thetas, thetas < (median + a))
     filtered_peaks = peaks[elements]
@@ -181,6 +246,21 @@ def find_and_pool(image: np.ndarray, n: int) -> List[Tuple]:
     return max_vals_list[:n]
 
 
+def get_r_theta_by_m_n(m: float, n: float, image_size: Tuple):
+    """
+    get r,theta of radon transform by m,n of line equation
+    :param m:
+    :param n:
+    :param image_size:
+    :return:
+    """
+    theta_rad = np.pi / 2 - np.arctan(-m)
+    dist = (n + m * (image_size[0] // 2) - image_size[1] // 2) / (np.sin(theta_rad) - m * np.cos(theta_rad))
+    r_cent = dist + image_size[0] // 2
+    theta_index = (np.rad2deg(theta_rad) / 180) * image_size[1]
+    return int(r_cent), int(theta_index)
+
+
 if __name__ == "__main__":
     res = radon_exmaple()
-    #draw_example()
+    # draw_example()

@@ -6,13 +6,15 @@ from nd2reader import ND2Reader
 
 
 def load_image(dir: str, processing_func: Callable = None):
-    data = None
+    processed_data = None
+    original_images = None
     with ND2Reader(dir) as images:
+        original_images = np.asarray(images)
         if processing_func:
-            data = processing_func(images)
+            processed_data = processing_func(images)
         else:
-            data = images[0]
-    return data
+            processed_data = images[0]
+    return processed_data, original_images
 
 
 def process_func(images: ND2Reader.ndim, threshold_func: Callable, agg_func: Callable):
