@@ -1,11 +1,7 @@
 import copy
 from typing import List, Tuple
-from collections import namedtuple
 import pickle
 
-import numpy
-
-from utils import add_contrast
 from labeler import Line
 from image_loader import load_image, process_or_mean
 from om_data.exported import ImageMetadataExported, ImageSegmentExported, SegmentedImageExported
@@ -15,50 +11,54 @@ import cv2
 import numpy as np
 import torch
 from skimage.feature.peak import peak_local_max
-from nd2reader import ND2Reader
-import matplotlib.pyplot as plt
 import math
 import imageio
 from skimage import io as sk_io
 from skimage.transform import warp_coords
-from itertools import product
 from uuid import uuid4
+import potrace
+import matplotlib.pyplot as plt
 
 
-def radon_exmaple():
-    image, orig_images = load_image("C:/Users/yarde/Documents/sample-data/2022-04-26/1001.nd2", process_or_mean)
+def radon_exmaple(file_name):
+    image, orig_images = load_image(file_name, process_or_mean)
     # image = np.zeros((512, 512))
-    # blured_image = cv2.medianBlur(image, 5)
+    # blurred_image = cv2.medianBlur(image, 5)
     # cv2.line(image, (0,216), (512,512), color=(255,0,0))
     # cv2.line(image, (0, 0), (512, 512), color=(255, 0, 0))
     # cv2.line(image, (0, 0), (296, 512), color=(255, 0, 0))
-    blured_image = image
+    blurred_image = image
     theta = np.linspace(0., 180., max(image.shape), endpoint=False)
-    res = transform.radon(image=blured_image, theta=theta)
+    res = transform.radon(image=blurred_image, theta=theta)
     kernel = np.ones((3, 7), np.uint8)
     peaks = peak_local_max(res, min_distance=2, num_peaks=20, footprint=kernel)
     peaks = filter_peaks(peaks, q=0.01)
     # peak = np.unravel_index(np.argmax(res, axis=None), res.shape)
     # peaks = [peak]
-    lines = find_lines(peaks=peaks, image_shape=blured_image.shape)
+    lines = find_lines(peaks=peaks, image_shape=blurred_image.shape)
     first_image = normalize_matrix(copy.deepcopy(orig_images[0]))
     segments = []
     for index, line in enumerate(lines):
         # r, theta = get_r_theta_by_m_n(line.m, line.n, image_size=image.shape)
-        # prof, line_image, curve_indices = get_line_profile(m=line.m, n=line.n, pixel_dist=10, image=blured_image)
-        prof, line_image, image_segment = get_line_profile_new(m=line.m, n=line.n, pixel_dist=10, image=blured_image,
+        prof, line_image, image_segment = get_line_profile_new(m=line.m, n=line.n, pixel_dist=10, image=blurred_image,
                                                                image_sequence=orig_images)
         segments.append(image_segment)
         get_ij_line_by_equation(line.m, line.n, first_image, color=255)
         imageio.imwrite(f"./extracted/{index}_profile.png", prof)
         imageio.imwrite(f"./extracted/{index}_origianl.jpeg", line_image)
-    output = np.concatenate([np.expand_dims(first_image, axis=0), orig_images], axis=0)
-    sk_io.imsave('./extracted/output.tiff', output, photometric='minisblack')
-    exported_segments = SegmentedImageExported(None, segments)
+    # output = np.concatenate([np.expand_dims(first_image, axis=0), orig_images], axis=0)
+    # sk_io.imsave('./extracted/output.svg', first_image, photometric='minisblack')
+    # image_data = im.fromarray(first_image)
+    # image_data.save('./extracted/output.svg')
+    plt.imshow(first_image, cmap=plt.get_cmap('gray'))
+    plt.savefig('./extracted/output.svg', dpi=1200)
+    image_metadata = ImageMetadataExported(file=file_name, processed_image_uuid=0, timestamps_sec=[], stage_x_um=0,
+                                           stage_y_um=0, image_read_metadata={})
+    exported_segments = SegmentedImageExported(image_metadata, segments)
     with open("example.pickle", "wb") as f:
         pickle.dump(exported_segments, f)
     # f, axarr = plt.subplots(2, 2, constrained_layout=True)
-    # axarr[0, 0].imshow(blured_image, cmap=plt.get_cmap('gray'))
+    # axarr[0, 0].imshow(blurred_image, cmap=plt.get_cmap('gray'))
     # axarr[0, 0].set_title("processed original")
     # axarr[1, 0].imshow(unfiltered_new_image, cmap=plt.get_cmap('gray'))
     # axarr[1, 0].set_title("unfiltered")
@@ -113,14 +113,14 @@ def get_line_profile_new(m: float, n: float, pixel_dist: int, image, image_seque
     iM = cv2.invertAffineTransform(M=M)
     profile_list = []
     for frame in range(0, image_sequence.shape[0]):
-        profile_list.append(cv2.warpAffine(image_sequence[frame], M, (pixel_dist, line_length)))
-    profile_sequence = np.stack(profile_list)
-    # ImageSegmentExported('1234', profile_sequence, [], np.array(curve_indices))
+        profile_list.append(np.rot90(cv2.warpAffine(image_sequence[frame], M, (pixel_dist, line_length))))
+    profile_sequence = np.concatenate(profile_list, axis=0)
     dst = cv2.warpAffine(image, M, (pixel_dist, line_length))
     inverse_func = get_inverse_affine(iM)
-    coorods_map = warp_coords(inverse_func, dst.shape, np.int)
-    image_segment = ImageSegmentExported(int(uuid4()), profile_image_seq=profile_sequence, profile_coords_map=coorods_map,
-                         profile_curve_coords=np.stack(curve_indices))
+    coorods_map = warp_coords(inverse_func, dst.shape, int)
+    image_segment = ImageSegmentExported(int(uuid4()), profile_image_seq=profile_sequence,
+                                         profile_coords_map=coorods_map,
+                                         profile_curve_coords=np.stack(curve_indices))
     return normalize_matrix(dst), new_image, image_segment
 
 
@@ -262,5 +262,5 @@ def get_r_theta_by_m_n(m: float, n: float, image_size: Tuple):
 
 
 if __name__ == "__main__":
-    res = radon_exmaple()
+    res = radon_exmaple(file_name="C:/Users/yarde/Documents/sample-data/2022-04-26/1001.nd2")
     # draw_example()
