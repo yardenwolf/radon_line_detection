@@ -13,11 +13,11 @@ import torch
 from skimage.feature.peak import peak_local_max
 import math
 import imageio
-from skimage import io as sk_io
 from skimage.transform import warp_coords
 from uuid import uuid4
-import potrace
 import matplotlib.pyplot as plt
+from scipy.ndimage import center_of_mass
+from itertools import product
 
 
 def radon_exmaple(file_name):
@@ -40,8 +40,9 @@ def radon_exmaple(file_name):
     segments = []
     for index, line in enumerate(lines):
         # r, theta = get_r_theta_by_m_n(line.m, line.n, image_size=image.shape)
-        prof, line_image, image_segment = get_line_profile_new(m=line.m, n=line.n, pixel_dist=10, image=blurred_image,
-                                                               image_sequence=orig_images)
+        prof, line_image, image_segment = get_line_profile_using_com(m=line.m, n=line.n, pixel_dist=10,
+                                                                     image=blurred_image,
+                                                                     image_sequence=orig_images, profile_len=200)
         segments.append(image_segment)
         get_ij_line_by_equation(line.m, line.n, first_image, color=255)
         imageio.imwrite(f"./extracted/{index}_profile.png", prof)
@@ -122,6 +123,61 @@ def get_line_profile_new(m: float, n: float, pixel_dist: int, image, image_seque
                                          profile_coords_map=coorods_map,
                                          profile_curve_coords=np.stack(curve_indices))
     return normalize_matrix(dst), new_image, image_segment
+
+
+def get_line_profile_using_com(m: float, n: float, pixel_dist: int, image, image_sequence, profile_len: int):
+    """
+    returns image with line on it and the straightened profile
+    :param m:
+    :param n:
+    :param pixel_dist:
+    :param image:
+    :param index:
+    :return:
+    """
+    new_image = copy.deepcopy(normalize_matrix(image))
+    curve_indices = get_ij_line_by_equation(m, n, new_image, color=255)
+    com_i, com_j = find_center_of_mass_for_line(m, n, pixel_dist, image)
+    p_0, p_1, p_2 = get_points_around_com(m, pixel_dist, com_i, com_j, profile_len=200, image_shape=image.shape)
+    pts1 = np.float32([p_0,
+                       p_1,
+                       p_2])
+    pts2 = np.float32([[0, 0],
+                       [2 * pixel_dist - 1, 0],
+                       [2 * pixel_dist - 1, profile_len - 1]])
+    M = cv2.getAffineTransform(pts1, pts2)
+    iM = cv2.invertAffineTransform(M=M)
+    profile_list = []
+    for frame in range(0, image_sequence.shape[0]):
+        profile_list.append(np.rot90(cv2.warpAffine(image_sequence[frame], M, (pixel_dist, profile_len))))
+    profile_sequence = np.concatenate(profile_list, axis=0)
+    dst = cv2.warpAffine(image, M, (pixel_dist, profile_len - 1))
+    inverse_func = get_inverse_affine(iM)
+    coorods_map = warp_coords(inverse_func, dst.shape, int)
+    image_segment = ImageSegmentExported(int(uuid4()), profile_image_seq=profile_sequence,
+                                         profile_coords_map=coorods_map,
+                                         profile_curve_coords=np.stack(curve_indices))
+    return normalize_matrix(dst), new_image, image_segment
+
+
+def find_center_of_mass_for_line(m: float, n: float, pixel_dist: int, image):
+    norm_image = normalize_matrix(image)
+    for i, j in product(range(0, image.shape[0]), range(0, image.shape[1])):
+        y_0 = m * j + n + pixel_dist
+        y_1 = m * j + n - pixel_dist
+        if image.shape[0] - i > y_0 or image.shape[0] - i < y_1:
+            norm_image[i, j] = 0
+    return center_of_mass(norm_image)
+
+
+def get_points_around_com(m: float, pixel_dist: int, com_i: int, com_j: int, profile_len: int, image_shape: Tuple):
+    alpha = np.arctan(m)
+    vertical_dist = np.sin(alpha) * (profile_len / 2)
+    horizantal_dist = np.cos(alpha) * (profile_len / 2)
+    p_0 = (max(int(com_j - pixel_dist + horizantal_dist), 0), max(int(com_i - vertical_dist), 0))
+    p_1 = (min(int(com_j + pixel_dist + horizantal_dist), image_shape[1]), max(int(com_i - vertical_dist), 0))
+    p_2 = (max(int(com_j + pixel_dist - horizantal_dist), 0), min(int(com_i + vertical_dist), image_shape[0]))
+    return p_0, p_1, p_2
 
 
 def get_inverse_affine(iM):
