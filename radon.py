@@ -18,9 +18,11 @@ from uuid import uuid4
 import matplotlib.pyplot as plt
 from scipy.ndimage import center_of_mass
 from itertools import product
+from pathlib import Path
 
 
-def radon_exmaple(file_name):
+def segment_lines_with_radon(file_name: str, output_prefix: str):
+    current_path = Path(file_name)
     image, orig_images = load_image(file_name, process_or_mean)
     # image = np.zeros((512, 512))
     # blurred_image = cv2.medianBlur(image, 5)
@@ -44,19 +46,17 @@ def radon_exmaple(file_name):
                                                                      image=blurred_image,
                                                                      image_sequence=orig_images, profile_len=200)
         segments.append(image_segment)
-        get_ij_line_by_equation(line.m, line.n, first_image, color=255)
-        imageio.imwrite(f"./extracted/{index}_profile.png", prof)
-        imageio.imwrite(f"./extracted/{index}_origianl.jpeg", line_image)
     # output = np.concatenate([np.expand_dims(first_image, axis=0), orig_images], axis=0)
     # sk_io.imsave('./extracted/output.svg', first_image, photometric='minisblack')
     # image_data = im.fromarray(first_image)
     # image_data.save('./extracted/output.svg')
+    uuid = str(uuid4())
     plt.imshow(first_image, cmap=plt.get_cmap('gray'))
-    plt.savefig('./extracted/output.svg', dpi=1200)
+    plt.savefig(f"{output_prefix}/{current_path.stem}_{uuid}.svg", dpi=1200)
     image_metadata = ImageMetadataExported(file=file_name, processed_image_uuid=0, timestamps_sec=[], stage_x_um=0,
                                            stage_y_um=0, image_read_metadata={})
     exported_segments = SegmentedImageExported(image_metadata, segments)
-    with open("example.pickle", "wb") as f:
+    with open(f"{output_prefix}/{current_path.stem}_{uuid}.pickle", "wb") as f:
         pickle.dump(exported_segments, f)
     # f, axarr = plt.subplots(2, 2, constrained_layout=True)
     # axarr[0, 0].imshow(blurred_image, cmap=plt.get_cmap('gray'))
@@ -318,5 +318,5 @@ def get_r_theta_by_m_n(m: float, n: float, image_size: Tuple):
 
 
 if __name__ == "__main__":
-    res = radon_exmaple(file_name="C:/Users/yarde/Documents/sample-data/2022-04-26/1001.nd2")
+    res = segment_lines_with_radon(file_name="C:/Users/yarde/Documents/sample-data/2022-04-26/1001.nd2")
     # draw_example()
