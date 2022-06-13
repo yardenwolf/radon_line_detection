@@ -1,6 +1,7 @@
 import copy
 from typing import List, Tuple
 import pickle
+from collections import deque
 
 from labeler import Line
 from image_loader import load_image, process_or_mean
@@ -34,7 +35,9 @@ def segment_lines_with_radon(file_name: str, output_prefix: str):
     res = transform.radon(image=blurred_image, theta=theta)
     kernel = np.ones((3, 7), np.uint8)
     peaks = peak_local_max(res, min_distance=2, num_peaks=20, footprint=kernel)
-    peaks = filter_peaks(peaks, q=0.01)
+    theta_min, theta_max = find_most_frequent_theta_in_peaks(peaks, res, window_size=10)
+    peaks = filter_peaks_by_range(theta_min, theta_max,peaks)
+    # peaks = [[160,most_likely_theta]]
     # peak = np.unravel_index(np.argmax(res, axis=None), res.shape)
     # peaks = [peak]
     lines = find_lines(peaks=peaks, image_shape=blurred_image.shape)
@@ -42,14 +45,12 @@ def segment_lines_with_radon(file_name: str, output_prefix: str):
     segments = []
     for index, line in enumerate(lines):
         # r, theta = get_r_theta_by_m_n(line.m, line.n, image_size=image.shape)
+        get_ij_line_by_equation(line.m, line.n, first_image, color=255)
         prof, line_image, image_segment = get_line_profile_using_com(m=line.m, n=line.n, pixel_dist=10,
                                                                      image=blurred_image,
                                                                      image_sequence=orig_images, profile_len=200)
         segments.append(image_segment)
-    # output = np.concatenate([np.expand_dims(first_image, axis=0), orig_images], axis=0)
-    # sk_io.imsave('./extracted/output.svg', first_image, photometric='minisblack')
-    # image_data = im.fromarray(first_image)
-    # image_data.save('./extracted/output.svg')
+
     uuid = str(uuid4())
     plt.imshow(first_image, cmap=plt.get_cmap('gray'))
     plt.savefig(f"{output_prefix}/{current_path.stem}_{uuid}.svg", dpi=1200)
@@ -58,14 +59,33 @@ def segment_lines_with_radon(file_name: str, output_prefix: str):
     exported_segments = SegmentedImageExported(image_metadata, segments)
     with open(f"{output_prefix}/{current_path.stem}_{uuid}.pickle", "wb") as f:
         pickle.dump(exported_segments, f)
-    # f, axarr = plt.subplots(2, 2, constrained_layout=True)
-    # axarr[0, 0].imshow(blurred_image, cmap=plt.get_cmap('gray'))
-    # axarr[0, 0].set_title("processed original")
-    # axarr[1, 0].imshow(unfiltered_new_image, cmap=plt.get_cmap('gray'))
-    # axarr[1, 0].set_title("unfiltered")
-    # axarr[1, 1].imshow(filtered_new_image, cmap=plt.get_cmap('gray'))
-    # axarr[1, 1].set_title("filtered")
-    # plt.savefig('pictures/noise_reduction_demo.png', dpi=1200)
+
+
+
+def find_most_frequent_theta_in_peaks(peaks: np.ndarray, image, window_size: int):
+    peaks_list = peaks.tolist()
+    vals_matrix = np.zeros(image.shape)
+    rows, cols = zip(*peaks_list)
+    vals_matrix[rows, cols] = image[rows, cols]
+    res = sliding_window_sum(np.sum(vals_matrix, axis=0), size=window_size)
+    max_index = np.argmax(res)
+    return (max_index, max_index + window_size - 1)
+    return res
+
+
+def sliding_window_sum(a, size):
+    out = []
+    the_sum = 0
+    q = deque()
+    for i in a:
+        if len(q) == size:
+            the_sum -= q[0]
+            q.popleft()
+        q.append(i)
+        the_sum += i
+        if len(q) == size:
+            out.append(the_sum)
+    return out
 
 
 def find_lines(peaks: List, image_shape: List, image=None) -> List[Line]:
@@ -255,6 +275,13 @@ def get_ij_line_by_equation(m: float, n: float, image, color=None):
     return index_list
 
 
+def filter_peaks_by_range(min: int, max: int, peaks):
+    thetas = peaks[0:, 1]
+    elements = np.logical_and(min <= thetas, thetas <= max)
+    filtered_peaks = peaks[elements]
+    return filtered_peaks
+
+
 def filter_peaks(peaks: np.ndarray, q: float = 0.05):
     """
     filtering peaks based on interval around the median of theta from the radon results.
@@ -263,9 +290,9 @@ def filter_peaks(peaks: np.ndarray, q: float = 0.05):
     :return:
     """
     thetas = peaks[0:, 1]
-    median = np.median(thetas)
-    a = median * q
-    elements = np.logical_and((median - a) < thetas, thetas < (median + a))
+    median = np.mean(thetas)
+    std = np.std(thetas)
+    elements = np.logical_and((median - std) < thetas, thetas < (median + std))
     filtered_peaks = peaks[elements]
     return filtered_peaks
 
@@ -318,5 +345,6 @@ def get_r_theta_by_m_n(m: float, n: float, image_size: Tuple):
 
 
 if __name__ == "__main__":
-    res = segment_lines_with_radon(file_name="C:/Users/yarde/Documents/sample-data/2022-04-26/1001.nd2")
+    res = segment_lines_with_radon(file_name="C:/Users/yarde/Documents/sample-data/2022-04-26/1.nd2",
+                                   output_prefix="./extracted")
     # draw_example()
