@@ -4,7 +4,7 @@ import pickle
 from collections import deque
 
 from labeler import Line
-from image_loader import load_image, process_or_mean
+from image_loader import load_image, process_or_mean, process_or_percentile
 from om_data.exported import ImageMetadataExported, ImageSegmentExported, SegmentedImageExported
 
 from skimage import transform
@@ -13,35 +13,36 @@ import numpy as np
 import torch
 from skimage.feature.peak import peak_local_max
 import math
-import imageio
 from skimage.transform import warp_coords
 from uuid import uuid4
 import matplotlib.pyplot as plt
 from scipy.ndimage import center_of_mass
 from itertools import product
 from pathlib import Path
+from skimage import io as sk_io
 
 
 def segment_lines_with_radon(file_name: str, output_prefix: str):
     current_path = Path(file_name)
-    image, orig_images = load_image(file_name, process_or_mean)
+    image, orig_images = load_image(file_name, process_or_percentile)
+    # test_image = np.zeros((512, 512))
+    # cv2.line(test_image, (0,511), (255,255), color=(255,0,0))
+    # image = test(image, step=250, slide_down=False)
     # image = np.zeros((512, 512))
-    # blurred_image = cv2.medianBlur(image, 5)
+    blurred_image = cv2.medianBlur(image, 5)
+    # image = blurred_image
     # cv2.line(image, (0,216), (512,512), color=(255,0,0))
     # cv2.line(image, (0, 0), (512, 512), color=(255, 0, 0))
     # cv2.line(image, (0, 0), (296, 512), color=(255, 0, 0))
-    blurred_image = image
     theta = np.linspace(0., 180., max(image.shape), endpoint=False)
-    res = transform.radon(image=blurred_image, theta=theta)
+    res = transform.radon(image=image, theta=theta)
     kernel = np.ones((3, 7), np.uint8)
-    peaks = peak_local_max(res, min_distance=2, num_peaks=20, footprint=kernel)
-    theta_min, theta_max = find_most_frequent_theta_in_peaks(peaks, res, window_size=10)
-    peaks = filter_peaks_by_range(theta_min, theta_max,peaks)
-    # peaks = [[160,most_likely_theta]]
-    # peak = np.unravel_index(np.argmax(res, axis=None), res.shape)
-    # peaks = [peak]
+    peaks = peak_local_max(res, min_distance=5, num_peaks=30, footprint=kernel)
+    theta_min, theta_max = find_most_frequent_theta_in_peaks(peaks, res, window_size=5)
+    peaks = filter_peaks_by_range(theta_min, theta_max, peaks)
     lines = find_lines(peaks=peaks, image_shape=blurred_image.shape)
     first_image = normalize_matrix(copy.deepcopy(orig_images[0]))
+    diag_image = normalize_matrix(copy.deepcopy(image))
     segments = []
     for index, line in enumerate(lines):
         # r, theta = get_r_theta_by_m_n(line.m, line.n, image_size=image.shape)
@@ -50,16 +51,62 @@ def segment_lines_with_radon(file_name: str, output_prefix: str):
                                                                      image=blurred_image,
                                                                      image_sequence=orig_images, profile_len=200)
         segments.append(image_segment)
-
+    #diagonals, mean_m = scan_all_diagonals(lines, diag_image, 4, 20)
+    #for line in diagonals:
+    #    get_ij_line_by_equation(mean_m, line[0], diag_image, color=255)
+    # res = is_theta_significant(lines, 1)
     uuid = str(uuid4())
+    save_as_tif(image, orig_images, "./extracted/output.tiff")
     plt.imshow(first_image, cmap=plt.get_cmap('gray'))
     plt.savefig(f"{output_prefix}/{current_path.stem}_{uuid}.svg", dpi=1200)
     image_metadata = ImageMetadataExported(file=file_name, processed_image_uuid=0, timestamps_sec=[], stage_x_um=0,
                                            stage_y_um=0, image_read_metadata={})
+
     exported_segments = SegmentedImageExported(image_metadata, segments)
     with open(f"{output_prefix}/{current_path.stem}_{uuid}.pickle", "wb") as f:
         pickle.dump(exported_segments, f)
 
+
+def save_as_tif(first_image, orig_images, path):
+    output = np.concatenate([np.expand_dims(first_image, axis=0), orig_images], axis=0)
+    sk_io.imsave(path, output, photometric='minisblack')
+
+
+def scan_all_diagonals(lines: List[Line], image, num_to_return: int, step: int):
+    if not is_theta_significant(lines, 0.5):
+        return
+    mean_m = np.mean(list(map(lambda x: x.m, lines)))
+    normalized_image = normalize_matrix(image)
+    sums = []
+    n_range = range(int(-mean_m * 511), 511) if mean_m > 0 else range(0, int(511 - mean_m * 511))
+    for n in n_range:
+        sums.append([n, sum_diagonal(mean_m, n, normalized_image)])
+    sums.sort(key=lambda x: x[1], reverse=True)
+    filtered_sums = [sums[0]]
+    prev = sums[0]
+    for curr_sum in sums:
+        if abs(prev[0] - curr_sum[0]) >= step:
+            filtered_sums.append(curr_sum)
+            prev = curr_sum
+    return filtered_sums[0:num_to_return + 1], mean_m
+
+
+def sum_diagonal(m, n, image):
+    y = lambda x: m * x + n
+    sum = 0
+    image_height = image.shape[0]
+    counter = 0
+    for j in range(image.shape[1]):
+        i = int(image_height - y(j))
+        if i >= 0 and i < image_height:
+            sum += image[j, i]
+            counter += 1
+    return sum / counter
+
+
+def is_theta_significant(lines: List[Line], epsilon: float) -> bool:
+    std = np.std(list(map(lambda x: x.m, lines)))
+    return std <= epsilon
 
 
 def find_most_frequent_theta_in_peaks(peaks: np.ndarray, image, window_size: int):
@@ -70,7 +117,6 @@ def find_most_frequent_theta_in_peaks(peaks: np.ndarray, image, window_size: int
     res = sliding_window_sum(np.sum(vals_matrix, axis=0), size=window_size)
     max_index = np.argmax(res)
     return (max_index, max_index + window_size - 1)
-    return res
 
 
 def sliding_window_sum(a, size):
@@ -345,6 +391,6 @@ def get_r_theta_by_m_n(m: float, n: float, image_size: Tuple):
 
 
 if __name__ == "__main__":
-    res = segment_lines_with_radon(file_name="C:/Users/yarde/Documents/sample-data/2022-04-26/1.nd2",
+    res = segment_lines_with_radon(file_name="C:/Users/yarde/Documents/sample-data/2022-04-26/1010.nd2",
                                    output_prefix="./extracted")
     # draw_example()
