@@ -347,6 +347,8 @@ def filter_peaks(peaks: np.ndarray, q: float = 0.05):
 def normalize_matrix(matrix: np.ndarray):
     min_val = np.min(matrix)
     max_val = np.max(matrix)
+    if max_val == min_val:
+        min_val = 0
     return (((matrix - min_val)) / (max_val - min_val)) * 255
 
 
@@ -392,6 +394,6 @@ def get_r_theta_by_m_n(m: float, n: float, image_size: Tuple):
 
 
 if __name__ == "__main__":
-    res = segment_lines_with_radon(file_name="C:/Users/yarde/Documents/sample-data/2022-04-26/1010.nd2",
+    res = segment_lines_with_radon(file_name="C:/Users/yarde/Documents/sample-data/2022-04-26/1006.nd2",
                                    output_prefix="./extracted")
     # draw_example()
