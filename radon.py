@@ -51,8 +51,8 @@ def segment_lines_with_radon(file_name: str, output_prefix: str):
                                                                      image=blurred_image,
                                                                      image_sequence=orig_images, profile_len=200)
         segments.append(image_segment)
-    #diagonals, mean_m = scan_all_diagonals(lines, diag_image, 4, 20)
-    #for line in diagonals:
+    # diagonals, mean_m = scan_all_diagonals(lines, diag_image, 4, 20)
+    # for line in diagonals:
     #    get_ij_line_by_equation(mean_m, line[0], diag_image, color=255)
     # res = is_theta_significant(lines, 1)
     uuid = str(uuid4())
@@ -215,9 +215,10 @@ def get_line_profile_using_com(m: float, n: float, pixel_dist: int, image, image
     iM = cv2.invertAffineTransform(M=M)
     profile_list = []
     for frame in range(0, image_sequence.shape[0]):
-        profile_list.append(np.rot90(cv2.warpAffine(image_sequence[frame], M, (pixel_dist, profile_len))))
-    profile_sequence = np.concatenate(profile_list, axis=0)
-    dst = cv2.warpAffine(image, M, (pixel_dist, profile_len - 1))
+        profile_list.append(cv2.warpAffine(image_sequence[frame], M, (pixel_dist, profile_len)))
+    # profile_sequence = np.concatenate(profile_list, axis=0)
+    profile_sequence = np.stack(profile_list, axis=0)
+    dst = cv2.warpAffine(image, M, (pixel_dist, profile_len))
     inverse_func = get_inverse_affine(iM)
     coorods_map = warp_coords(inverse_func, dst.shape, int)
     image_segment = ImageSegmentExported(int(uuid4()), profile_image_seq=profile_sequence,

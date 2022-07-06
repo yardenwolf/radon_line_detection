@@ -1,5 +1,7 @@
 from radon import segment_lines_with_radon
 from os import listdir
+import sys
+import pathlib
 
 
 def sort_func(file_name: str):
@@ -10,8 +12,15 @@ def sort_func(file_name: str):
 def run_radon_segment_for_files(dir, output_prefix):
     files = listdir(dir)
     files.sort(key=sort_func)
+    files_with_errors = []
     for file_name in files:
-        segment_lines_with_radon(f"{dir}/{file_name}", output_prefix)
+        try:
+            segment_lines_with_radon(f"{dir}/{file_name}", output_prefix)
+        except:
+            files_with_errors.append(file_name)
+
+    with open("./files_with_errors.txt", "w") as f:
+        f.write(str(files_with_errors))
 
 
 def experiment():
@@ -19,5 +28,10 @@ def experiment():
 
 
 if __name__ == "__main__":
-    run_radon_segment_for_files("\\\\132.68.109.77/Public/Yevgeni/segmenter-team/2022-04-26/unmethylated",
-                                "\\\\132.68.109.77/Public/Yevgeni/segmenter-team/2022-04-26-segments")
+    if len(sys.argv) < 3:
+        raise ValueError("Not enough arguments for script")
+    input = pathlib.Path(sys.argv[1])
+    output = pathlib.Path(sys.argv[2])
+    if not (input.is_dir() and output.is_dir()):
+        raise ValueError("input or output aren't valid directories")
+    run_radon_segment_for_files(dir=input.absolute(), output_prefix=output.absolute())
