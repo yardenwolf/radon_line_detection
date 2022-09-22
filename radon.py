@@ -29,27 +29,28 @@ def segment_lines_with_radon(file_name: str, output_prefix: str):
     # cv2.line(test_image, (0,511), (255,255), color=(255,0,0))
     # image = test(image, step=250, slide_down=False)
     # image = np.zeros((512, 512))
-    blurred_image = cv2.medianBlur(image, 5)
+    # blurred_image = cv2.medianBlur(image, 5)
     # image = blurred_image
     # cv2.line(image, (0,216), (512,512), color=(255,0,0))
     # cv2.line(image, (0, 0), (512, 512), color=(255, 0, 0))
     # cv2.line(image, (0, 0), (296, 512), color=(255, 0, 0))
+    # orig_images = np.expand_dims(image,axis=0)
     theta = np.linspace(0., 180., max(image.shape), endpoint=False)
     res = transform.radon(image=image, theta=theta)
     kernel = np.ones((3, 7), np.uint8)
     peaks = peak_local_max(res, min_distance=5, num_peaks=30, footprint=kernel)
     theta_min, theta_max = find_most_frequent_theta_in_peaks(peaks, res, window_size=5)
     peaks = filter_peaks_by_range(theta_min, theta_max, peaks)
-    lines = find_lines(peaks=peaks, image_shape=blurred_image.shape)
+    lines = find_lines(peaks=peaks, image_shape=image.shape)
     first_image = normalize_matrix(copy.deepcopy(orig_images[0]))
     diag_image = normalize_matrix(copy.deepcopy(image))
     segments = []
     for index, line in enumerate(lines):
         # r, theta = get_r_theta_by_m_n(line.m, line.n, image_size=image.shape)
         get_ij_line_by_equation(line.m, line.n, first_image, color=255)
-        prof, line_image, image_segment = get_line_profile_using_com(m=line.m, n=line.n, pixel_dist=10,
-                                                                     image=blurred_image,
-                                                                     image_sequence=orig_images, profile_len=200)
+        prof, line_image, image_segment = get_line_profile_new(m=line.m, n=line.n, pixel_dist=10,
+                                                               image=image,
+                                                               image_sequence=orig_images)
         segments.append(image_segment)
     # diagonals, mean_m = scan_all_diagonals(lines, diag_image, 4, 20)
     # for line in diagonals:
@@ -57,6 +58,7 @@ def segment_lines_with_radon(file_name: str, output_prefix: str):
     # res = is_theta_significant(lines, 1)
     uuid = str(uuid4())
     save_as_tif(image, orig_images, "./extracted/output.tiff")
+
     plt.imshow(first_image, cmap=plt.get_cmap('gray'))
     plt.savefig(f"{output_prefix}/{current_path.stem}_{uuid}.svg", dpi=1200)
     image_metadata = ImageMetadataExported(file=file_name, processed_image_uuid=0, timestamps_sec=[], stage_x_um=0,
@@ -154,7 +156,7 @@ def get_m_n_line(r_cent, theta, image_size):
     return m, n
 
 
-def get_line_profile_new(m: float, n: float, pixel_dist: int, image, image_sequence):
+def get_line_profile_new(m: float, n: float, pixel_dist: int, image, image_sequence, len=100):
     """
     returns image with line on it and the straightened profile
     :param m:
@@ -173,22 +175,27 @@ def get_line_profile_new(m: float, n: float, pixel_dist: int, image, image_seque
     pts1 = np.float32([first_0,
                        last_0,
                        first_1])
-    pts2 = np.float32([[0, line_length - 1],
-                       [0, 0],
-                       [pixel_dist - 1, line_length - 1]])
+    pts2 = np.float32([[0, pixel_dist - 1],
+                       [line_length - 1, pixel_dist - 1],
+                       [0, 0]])
     M = cv2.getAffineTransform(pts1, pts2)
     iM = cv2.invertAffineTransform(M=M)
+    dst = cv2.warpAffine(new_image, M, (line_length, pixel_dist))
+    com_i, com_j = center_of_mass(dst)
+
     profile_list = []
     for frame in range(0, image_sequence.shape[0]):
-        profile_list.append(np.rot90(cv2.warpAffine(image_sequence[frame], M, (pixel_dist, line_length))))
-    profile_sequence = np.concatenate(profile_list, axis=0)
-    dst = cv2.warpAffine(image, M, (pixel_dist, line_length))
+        affine_res = cv2.warpAffine(image_sequence[frame], M, (line_length, pixel_dist))
+        profile_list.append(affine_res[:, max(int(com_j) - len, 0):min(int(com_j) + len, affine_res.shape[1])])
+    profile_sequence = np.stack(profile_list, axis=0)
+
     inverse_func = get_inverse_affine(iM)
     coorods_map = warp_coords(inverse_func, dst.shape, int)
+    coorods_map = coorods_map[:, :, max(int(com_j) - len, 0):min(int(com_j) + len, coorods_map.shape[2])]
     image_segment = ImageSegmentExported(int(uuid4()), profile_image_seq=profile_sequence,
                                          profile_coords_map=coorods_map,
                                          profile_curve_coords=np.stack(curve_indices))
-    return normalize_matrix(dst), new_image, image_segment
+    return dst, new_image, image_segment
 
 
 def get_line_profile_using_com(m: float, n: float, pixel_dist: int, image, image_sequence, profile_len: int):

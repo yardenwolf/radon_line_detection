@@ -9,4 +9,4 @@ def load_pickle(path:str):
 
 
 if __name__ == "__main__":
-    load_pickle("./extracted/1006_305c2b02-a6e7-4bd5-b283-b4a6e7d77bac.pickle")
+    load_pickle("./extracted/1006_1d3bb264-73a8-4b00-8bd1-86a704ba0946.pickle")
